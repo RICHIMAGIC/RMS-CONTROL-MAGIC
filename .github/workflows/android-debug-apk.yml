@@ -1,3 +1,4 @@
+
 name: RMS CONTROL MAGIC - Build APK
 
 on:
@@ -11,10 +12,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    env:
-      ANDROID_HOME: /usr/local/lib/android/sdk
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-
     steps:
       - name: Descargar proyecto
         uses: actions/checkout@v4
@@ -25,37 +22,64 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Configurar Android SDK
+      - name: Preparar Android SDK
+        shell: bash
         run: |
-          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)
+          set -e
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
           if [ -z "$SDKMANAGER" ]; then
             echo "No se encontró sdkmanager"
             exit 1
           fi
           echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
-          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          echo "$SDK_ROOT/platform-tools" >> "$GITHUB_PATH"
+          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
 
-      - name: Aceptar licencias Android SDK
-        run: yes | sdkmanager --licenses
-
-      - name: Instalar Android SDK 35
-        run: sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+      - name: Aceptar licencias e instalar Android SDK 35
+        shell: bash
+        run: |
+          set -e
+          set +o pipefail
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses
+          set -o pipefail
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
       - name: Extraer proyecto Android
+        shell: bash
         run: |
+          set -e
           mkdir -p source
           unzip -o richi-rms-control-magic-cloud-build.zip -d source
 
       - name: Compilar APK
+        shell: bash
         run: |
-          chmod +x source/gradlew
-          cd source
-          ./gradlew assembleDebug
+          set -e
+          GRADLEW="$(find "$GITHUB_WORKSPACE/source" -type f -name gradlew -print -quit)"
+          if [ -z "$GRADLEW" ]; then
+            echo "ERROR: No se encontró gradlew dentro del ZIP"
+            find source -maxdepth 4 -type f | head -100
+            exit 1
+          fi
+          PROJECT_DIR="$(dirname "$GRADLEW")"
+          chmod +x "$GRADLEW"
+          cd "$PROJECT_DIR"
+          ./gradlew --no-daemon assembleDebug
+          APK="$(find "$PROJECT_DIR" -type f -path "*/build/outputs/apk/debug/*.apk" -print -quit)"
+          if [ -z "$APK" ]; then
+            echo "ERROR: No se generó la APK"
+            exit 1
+          fi
+          mkdir -p "$GITHUB_WORKSPACE/artifact"
+          cp "$APK" "$GITHUB_WORKSPACE/artifact/RMS-CONTROL-MAGIC.apk"
 
       - name: Guardar APK
         uses: actions/upload-artifact@v4
         with:
           name: RMS-CONTROL-APK
-          path: source/app/build/outputs/apk/debug/app-debug.apk
+          path: artifact/RMS-CONTROL-MAGIC.apk
           if-no-files-found: error
           
